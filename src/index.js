@@ -22,6 +22,7 @@ export default {
         );
       }
 
+
       // Parse request body
       const body = await request.json();
       const { release_tag, pr_numbers, repo_owner = 'esphome', repo_name = 'esphome' } = body;
@@ -59,6 +60,7 @@ export default {
   },
 };
 
+
 async function checkPRInRelease(kv, repoOwner, repoName, prNumber, releaseTag, githubToken) {
   // Create cache key
   const cacheKey = `${repoOwner}/${repoName}/pr-${prNumber}/release-${releaseTag}`;
@@ -75,8 +77,8 @@ async function checkPRInRelease(kv, repoOwner, repoName, prNumber, releaseTag, g
       return cachedData;
     }
 
-    // If status is "not-yet", check if cache expired (24 hours)
-    if (cachedData.status === 'not-yet') {
+    // If status is "not-yet" or checking a dev branch, check if cache expired (24 hours)
+    if (cachedData.status === 'not-yet' || releaseTag.endsWith('dev')) {
       const hoursSinceCached = (now - cachedTime) / (1000 * 60 * 60);
       if (hoursSinceCached < 24) {
         return cachedData;
@@ -133,24 +135,49 @@ async function fetchPRReleaseStatus(repoOwner, repoName, prNumber, releaseTag, g
 
   const mergeCommitSha = prData.merge_commit_sha;
 
-  // Get release tag SHA
-  const tagUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/git/ref/tags/${releaseTag}`;
-  const tagResponse = await fetch(tagUrl, { headers });
+  // Determine if we're checking a tag or a branch
+  const isDevBranch = releaseTag.endsWith('dev');
+  let targetSha;
+  let targetType;
 
-  if (!tagResponse.ok) {
-    return {
-      status: 'error',
-      error: `Failed to fetch release tag: ${tagResponse.status}`,
-      pr_number: prNumber,
-      release_tag: releaseTag,
-    };
+  if (isDevBranch) {
+    // Fetch branch SHA
+    const branchUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/git/ref/heads/dev`;
+    const branchResponse = await fetch(branchUrl, { headers });
+
+    if (!branchResponse.ok) {
+      return {
+        status: 'error',
+        error: `Failed to fetch branch: ${branchResponse.status}`,
+        pr_number: prNumber,
+        release_tag: releaseTag,
+      };
+    }
+
+    const branchData = await branchResponse.json();
+    targetSha = branchData.object.sha;
+    targetType = 'branch';
+  } else {
+    // Fetch tag SHA
+    const tagUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/git/ref/tags/${releaseTag}`;
+    const tagResponse = await fetch(tagUrl, { headers });
+
+    if (!tagResponse.ok) {
+      return {
+        status: 'error',
+        error: `Failed to fetch release tag: ${tagResponse.status}`,
+        pr_number: prNumber,
+        release_tag: releaseTag,
+      };
+    }
+
+    const tagData = await tagResponse.json();
+    targetSha = tagData.object.sha;
+    targetType = 'tag';
   }
 
-  const tagData = await tagResponse.json();
-  const tagSha = tagData.object.sha;
-
-  // Compare merge commit with release tag
-  const compareUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/compare/${mergeCommitSha}...${tagSha}`;
+  // Compare head commit with target (tag or branch)
+  const compareUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/compare/${mergeCommitSha}...${targetSha}`;
   const compareResponse = await fetch(compareUrl, { headers });
 
   if (!compareResponse.ok) {
@@ -163,16 +190,36 @@ async function fetchPRReleaseStatus(repoOwner, repoName, prNumber, releaseTag, g
   }
 
   const compareData = await compareResponse.json();
+  console.log(compareUrl);
+  console.log(compareData.status);
 
-  // Check if merge commit is in release
-  const isMerged = ['ahead', 'identical'].includes(compareData.status);
+  // Check if head commit is in release
+  const isInRelease = ['ahead', 'identical'].includes(compareData.status);
+  let isCherryPicked = false;
+
+  // 2. If not found by SHA, look for a "Patch Match" or "Message Match"
+  if (!isInRelease) {
+    const originalCommitMessage = prData.title; // Or fetch the actual original commit message
+    
+    isCherryPicked = compareData.commits.some(commit => {
+      // Check if the message contains the original SHA (the -x flag behavior)
+      const hasShaReference = commit.commit.message.includes(mergeCommitSha);
+      
+      // OR: Check if the commit message is identical (common in manual cherry-picks)
+      const hasSameMessage = commit.commit.message.includes(originalCommitMessage);
+
+      return hasShaReference || hasSameMessage;
+    });
+  }
 
   return {
-    status: isMerged ? 'merged' : 'not-yet',
+    status: (isCherryPicked || isInRelease) ? 'merged' : 'not-yet',
     pr_number: prNumber,
     release_tag: releaseTag,
+    target_type: targetType,
     merge_commit_sha: mergeCommitSha,
     pr_merged_at: prData.merged_at,
-    is_in_release: isMerged,
+    is_in_release: isInRelease,
+    is_cherry_picked: isCherryPicked,
   };
 }
