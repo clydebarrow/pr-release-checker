@@ -1,14 +1,17 @@
-name = "pr-release-checker"
+name = "pr-checker"
 main = "src/index.js"
 compatibility_date = "2024-01-30"
 workers_dev = true
 
+[version_metadata]
+binding = "CF_VERSION"
+
 [[kv_namespaces]]
 binding = "PR_CACHE"
-id = "e0dac62212ac47da8563d3c44b801197"
-preview_id = "0ba7dd8676904800a5554b6f1d1e572d"
+id = "625d347f211b47a6826004dda000b9a4"
+preview_id = "5760d58693894fb99780fcfa049cb11f"
 
 [[routes]]
-pattern = "prcheck.control-j.com"
+pattern = "pr-check.control-j.com"
 custom_domain = true
 
