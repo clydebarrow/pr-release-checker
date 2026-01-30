@@ -1,6 +1,7 @@
 name = "pr-release-checker"
 main = "src/index.js"
 compatibility_date = "2024-01-30"
+workers_dev = true
 
 [[kv_namespaces]]
 binding = "PR_CACHE"
