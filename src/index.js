@@ -190,8 +190,6 @@ async function fetchPRReleaseStatus(repoOwner, repoName, prNumber, releaseTag, g
   }
 
   const compareData = await compareResponse.json();
-  console.log(compareUrl);
-  console.log(compareData.status);
 
   // Check if head commit is in release
   const isInRelease = ['ahead', 'identical'].includes(compareData.status);
